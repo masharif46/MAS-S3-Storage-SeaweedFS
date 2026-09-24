@@ -141,6 +141,13 @@ docker ps -a --filter name=mas-storage-seaweedfs
 docker port mas-storage-seaweedfs
 sudo du -sh /opt/mas-storage-seaweedfs
 df -h /opt/mas-storage-seaweedfs
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest  curl -v http://<SEAWEEDFS_IP>:8333
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker inspect mas-storage-seaweedfs --format '{{with index .NetworkSettings.Networks "k3d-gitlab-k8s"}}{{.IPAddress}}{{end}}'
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
+
 ```
 
 The installer prints diagnostics automatically if the S3 endpoint does not become ready. It also detects crash-looping containers and recreates them when appropriate.
@@ -182,17 +189,6 @@ Type `UNINSTALL` when prompted. Only delete the data after verifying backups:
 
 ```bash
 sudo rm -rf /opt/mas-storage-seaweedfs
-```
-
-## Some Additional 
-```bash
-docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest  curl -v http://<SEAWEEDFS_IP>:8333
-docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-docker inspect mas-storage-seaweedfs --format '{{with index .NetworkSettings.Networks "k3d-gitlab-k8s"}}{{.IPAddress}}{{end}}'
-docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
-
 ```
 
 
