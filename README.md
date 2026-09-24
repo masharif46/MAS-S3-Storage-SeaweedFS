@@ -199,3 +199,7 @@ sudo rm -rf /opt/mas-storage-seaweedfs
 - Add TLS and firewall restrictions before remote exposure.
 - Credentials are stored in `.env`, which is ignored by Git.
 - This is a single-node deployment and does not provide host-failure protection, replication, immutable backups, or encryption in transit by itself.
+
+## Acknowledgements
+
+This project uses [SeaweedFS](https://github.com/seaweedfs/seaweedfs), an open-source storage system that provides the S3-compatible object-storage service used here. Many thanks to the SeaweedFS maintainers and contributors for their work.
