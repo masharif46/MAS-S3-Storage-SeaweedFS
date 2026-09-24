@@ -184,6 +184,19 @@ Type `UNINSTALL` when prompted. Only delete the data after verifying backups:
 sudo rm -rf /opt/mas-storage-seaweedfs
 ```
 
+## Some Additional 
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest  curl -v http://<SEAWEEDFS_IP>:8333
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker inspect mas-storage-seaweedfs --format '{{with index .NetworkSettings.Networks "k3d-gitlab-k8s"}}{{.IPAddress}}{{end}}'
+docker run --rm --network k3d-gitlab-k8s curlimages/curl:latest curl -v http://172.20.0.6:8333
+
+```
+
+
+
 ## Security and availability
 
 - S3 and Admin bind to localhost by default; Nginx provides hostname access.
