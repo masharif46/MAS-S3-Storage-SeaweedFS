@@ -133,6 +133,44 @@ sudo du -sh /opt/mas-storage-seaweedfs
 df -h /opt/mas-storage-seaweedfs
 ```
 
+## S3 client
+
+
+```bash
+cd /tmp
+
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+
+sudo apt update
+sudo apt install -y unzip curl
+
+unzip -q awscliv2.zip
+
+sudo ./aws/install
+
+aws --version
+```
+
+
+## Seaweedfs Test
+
+```bash
+chmod +x test-object-storage.sh
+
+export OBJECT_STORAGE_BACKEND=seaweedfs
+export SEAWEEDFS_S3_ENDPOINT=http://172.20.0.6:8333
+export SEAWEEDFS_S3_REGION=us-east-1
+export SEAWEEDFS_ACCESS_KEY=cnpg-admin
+export SEAWEEDFS_SECRET_KEY='YOUR_SECRET'
+
+./test-object-storage.sh
+```
+
+
+
+
+
+
 ## Operations and troubleshooting
 
 ```bash
