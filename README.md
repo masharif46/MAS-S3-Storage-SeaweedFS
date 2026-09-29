@@ -86,6 +86,8 @@ SeaweedFS server. The third command runs from a separate client computer.
 From the project directory on the storage server:
 
 ```bash
+chmod +x install-seaweedfs.sh install-nginx.sh test-seaweedfs.sh
+chmod +x setup-s3-project.sh add-s3-identity.sh
 sudo ./install-seaweedfs.sh
 sudo ./install-nginx.sh
 sudo ./test-seaweedfs.sh --strict-nginx
@@ -101,51 +103,66 @@ to `/etc/hosts` (or create matching DNS records):
 
 ```text
 SERVER_IP mas-storage-seaweedfs.com admin.mas-storage-seaweedfs.com
+```
+
+Verify it from that client computer:
+
+```bash
 getent hosts mas-storage-seaweedfs.com admin.mas-storage-seaweedfs.com
 ```
 
-### Step 2 — Create buckets and a project identity
+### Step 2 — Create a bucket and configure project access
 
-Run this on the storage server. Buckets are created with the default
-administrator identity. The project identity receives access only to the
-buckets listed with `--bucket`; it cannot create or delete buckets.
+Run the setup helper on the storage server. It prompts for the project and
+bucket names, checks the bucket list using the administrator credentials in
+`.env`, creates the bucket only when it is absent, then configures access:
 
 ```bash
-# Load the local administrator credentials without printing them.
-set -a
-source .env
-set +a
-export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
-export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
-export AWS_DEFAULT_REGION='us-east-1'
-
-# Create the buckets for one project/environment.
-aws --endpoint-url http://127.0.0.1:28333 s3 mb s3://myapps-dev-backups
-aws --endpoint-url http://127.0.0.1:28333 s3 mb s3://myapps-dev-lead-finder-artifacts
-
-# Create and automatically activate restricted application credentials.
-sudo ./add-s3-identity.sh myapps-dev \
-  --bucket myapps-dev-backups \
-  --bucket myapps-dev-lead-finder-artifacts
+chmod +x setup-s3-project.sh add-s3-identity.sh
+./setup-s3-project.sh
 ```
 
-Save the access key and secret printed by `add-s3-identity.sh` in the project's
-secret manager. The identity is activated automatically; do not run a separate
-`docker restart`.
+Example input:
+
+```text
+Project name: myapps-dev
+Bucket name: myapps-dev-backups
+```
+
+For a new project, the script creates a restricted identity and prints its
+access key and secret once. Save both in the application's secret manager.
+For an existing project, it preserves the current access key and secret and
+adds permission to the new bucket. Running it again for the same project and
+bucket makes no changes. The project identity cannot create or delete buckets.
+
+To configure another bucket for the same project, run `./setup-s3-project.sh`
+again, enter the same project name, then enter the additional bucket name. The
+identity keeps the same credentials and receives access to both buckets.
 
 ### Step 3 — Test remotely as the project identity
 
 Copy `remote-test-object-storage.sh` to a remote computer with AWS CLI
-installed. Run the test as the normal remote user, not with `sudo`:
+installed. For example, from the storage server:
 
 ```bash
-export AWS_ACCESS_KEY_ID='mas-myapps-dev'
+scp ./remote-test-object-storage.sh USER@CLIENT_IP:~/
+```
+
+On the remote computer, run the test as the normal user, not with `sudo`. Enter
+the project identity's access key and secret printed in Step 2. Use the exact
+bucket name entered in Step 2:
+
+```bash
+PROJECT='myapps-dev'
+BUCKET="${PROJECT}-backups"
+chmod +x remote-test-object-storage.sh
+export AWS_ACCESS_KEY_ID="mas-${PROJECT}"
 export AWS_SECRET_ACCESS_KEY='THE_SECRET_PRINTED_IN_STEP_2'
 export AWS_DEFAULT_REGION='us-east-1'
 
 ./remote-test-object-storage.sh \
   --endpoint http://mas-storage-seaweedfs.com \
-  --bucket myapps-dev-backups
+  --bucket "${BUCKET}"
 ```
 
 The test creates a temporary 1 MiB object, downloads it, verifies its SHA-256
@@ -246,13 +263,13 @@ been applied to the running SeaweedFS container. Do not use the legacy
 `install-seaweedfs-k3d.sh` installer, because it can regenerate `s3.json`
 without the current identity registry.
 
-Create the required buckets first using the administrator credentials. Project
-identities cannot create or delete buckets; they receive access only to the
-existing buckets explicitly listed with `--bucket`. Then create and activate
-an identity as follows:
+The setup helper in Step 2 creates missing buckets with the administrator
+credentials. Project identities cannot create or delete buckets; they receive
+access only to buckets assigned through the helper or listed with `--bucket`.
+For non-interactive setup, `add-s3-identity.sh` also creates a missing bucket,
+then creates the identity or adds access without changing existing credentials:
 
 ```bash
-# The buckets must already exist.
 sudo ./add-s3-identity.sh laravel-dev \
   --bucket laravel-dev \
   --bucket laravel-assets \
@@ -267,26 +284,15 @@ The following example creates the buckets with the administrator credential,
 then creates one Laravel development identity with access to those buckets:
 
 ```bash
-# 1. Use the administrator credentials to create buckets.
-export AWS_ACCESS_KEY_ID='cnpg-admin'
-export AWS_SECRET_ACCESS_KEY='THE_ADMIN_SECRET'
-export AWS_DEFAULT_REGION='us-east-1'
-export S3_ENDPOINT='http://mas-storage-seaweedfs.com'
-
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-dev
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-assets
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-backups
-
-# 2. Create the identity on the SeaweedFS server with existing buckets.
-sudo ./add-s3-identity.sh laravel-dev \
-  --bucket laravel-dev \
-  --bucket laravel-assets \
-  --bucket laravel-backups
-
-# The identity is applied automatically. No Docker restart is required.
+# Repeat this once per bucket. The first run creates credentials; later runs
+# preserve the same credentials and add bucket access.
+./setup-s3-project.sh --project laravel-dev --bucket laravel-dev
+./setup-s3-project.sh --project laravel-dev --bucket laravel-assets
+./setup-s3-project.sh --project laravel-dev --bucket laravel-backups
 ```
 
-The command prints values similar to these once:
+On the first run the command prints values similar to these once. Later runs
+keep the same keys and add the requested bucket permission:
 
 ```text
 Identity:    laravel-dev
@@ -325,8 +331,8 @@ sudo ./check-storage-usage.sh \
 ```
 
 Use the same pattern for `laravel-staging` and `laravel-prod`, but keep their
-credentials and application secrets separate. Creating an identity does not
-automatically create buckets.
+credentials and application secrets separate. The setup helper creates missing
+buckets and configures the matching identity access automatically.
 
 To change the bucket access for an existing non-admin identity:
 
@@ -728,7 +734,8 @@ sudo ./install-nginx.sh
 | `install-seaweedfs-k3d.sh` | Legacy k3d-specific installer; do not use for the current deployment. |
 | `install-nginx.sh` | Install, validate, and reload the Nginx reverse proxy. |
 | `uninstall-seaweedfs.sh` | Remove the container and Nginx configuration while preserving data by default. |
-| `add-s3-identity.sh` | Create a named project or environment identity. |
+| `add-s3-identity.sh` | Create or extend a named identity, preserving existing credentials. |
+| `setup-s3-project.sh` | Prompt for a project and bucket, create the bucket if needed, then create or extend project access. |
 | `grant-s3-identity-buckets.sh` | Assign existing buckets to a non-admin identity. |
 | `rotate-s3-identity-secret.sh` | Rotate a non-admin identity’s secret without changing its access key or buckets. |
 | `check-storage-usage.sh` | Report one identity’s usage across one or more buckets. |

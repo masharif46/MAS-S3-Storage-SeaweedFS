@@ -29,8 +29,29 @@ done
 [[ -f "${IDENTITIES_FILE}" ]] || { printf '[ERROR] Missing %s.\n' "${IDENTITIES_FILE}" >&2; exit 1; }
 [[ -f "${ENV_FILE}" ]] || { printf '[ERROR] Missing %s. Run install-seaweedfs.sh first.\n' "${ENV_FILE}" >&2; exit 1; }
 
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
 for bucket_name in "${bucket_names[@]}"; do
     [[ "${bucket_name}" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { printf '[ERROR] Invalid bucket name: %s\n' "${bucket_name}" >&2; exit 1; }
+done
+
+command -v aws >/dev/null 2>&1 || {
+    printf '[ERROR] AWS CLI is required to validate the requested buckets.\n' >&2
+    printf '        Install AWS CLI, create the buckets as administrator, then retry.\n' >&2
+    exit 1
+}
+admin_endpoint="http://127.0.0.1:${S3_PORT:-28333}"
+for bucket_name in "${bucket_names[@]}"; do
+    if ! AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY}" \
+        AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY}" \
+        AWS_DEFAULT_REGION='us-east-1' \
+        aws --endpoint-url "${admin_endpoint}" s3api head-bucket --bucket "${bucket_name}" >/dev/null 2>&1; then
+        printf '[ERROR] Requested bucket does not exist: %s\n' "${bucket_name}" >&2
+        printf '        Create this exact name with the administrator identity first:\n' >&2
+        printf '  aws --endpoint-url %s s3 mb s3://%s\n' "${admin_endpoint}" "${bucket_name}" >&2
+        exit 1
+    fi
 done
 
 record="$(awk -F'|' -v name="${identity_name}" '$1 == name { print; exit }' "${IDENTITIES_FILE}")"
