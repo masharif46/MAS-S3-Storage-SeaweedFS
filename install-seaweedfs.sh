@@ -130,7 +130,7 @@ EOF
         [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid identity name in ${IDENTITIES_FILE}: ${name}"
         [[ "${access_key}" =~ ^[A-Za-z0-9._-]{3,128}$ ]] || die "Invalid access key for identity ${name}"
         [[ "${secret_key}" =~ ^[A-Za-z0-9._~+/=-]{32,}$ ]] || die "Invalid secret key for identity ${name}"
-        [[ "${actions}" =~ ^[A-Za-z]+(,[A-Za-z]+)*$ ]] || die "Invalid actions for identity ${name}"
+        [[ "${actions}" =~ ^[A-Za-z]+(:[A-Za-z0-9._-]+)?(,[A-Za-z]+(:[A-Za-z0-9._-]+)?)*$ ]] || die "Invalid actions for identity ${name}"
         actions_json="$(printf '%s' "${actions}" | sed 's/,/","/g')"
         if [[ "${first}" == true ]]; then
             first=false
@@ -174,7 +174,7 @@ remove_managed_container() {
     fi
 
     local managed
-    managed="$(docker inspect -f '{{ index .Config.Labels "${MANAGED_LABEL}" }}' "${CONTAINER_NAME}")"
+    managed="$(docker inspect -f "{{ index .Config.Labels \"${MANAGED_LABEL}\" }}" "${CONTAINER_NAME}")"
     [[ "${managed}" == "true" ]] || managed_container_conflict
     log "Replacing the existing managed container (the data directory is preserved)."
     docker rm -f "${CONTAINER_NAME}" >/dev/null
@@ -186,7 +186,7 @@ reuse_running_container() {
     fi
 
     local managed running restart_count
-    managed="$(docker inspect -f '{{ index .Config.Labels "${MANAGED_LABEL}" }}' "${CONTAINER_NAME}")"
+    managed="$(docker inspect -f "{{ index .Config.Labels \"${MANAGED_LABEL}\" }}" "${CONTAINER_NAME}")"
     [[ "${managed}" == "true" ]] || managed_container_conflict
 
     running="$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")"

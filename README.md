@@ -83,6 +83,8 @@ From the project directory:
 chmod +x install-seaweedfs.sh install-nginx.sh uninstall-seaweedfs.sh
 chmod +x backup-seaweedfs.sh restore-seaweedfs.sh add-s3-identity.sh
 chmod +x check-storage-usage.sh remove-s3-identity.sh
+chmod +x grant-s3-identity-buckets.sh
+chmod +x rotate-s3-identity-secret.sh
 chmod +x remote-test-object-storage.sh
 chmod +x test-seaweedfs.sh
 sudo ./install-seaweedfs.sh
@@ -180,24 +182,45 @@ without the current identity registry.
 
 Create credentials for an application or environment with:
 
+Create the required buckets first using the administrator credentials. Project
+identities cannot create or delete buckets; they receive access only to the
+existing buckets explicitly listed with `--bucket`.
+
 ```bash
-sudo ./add-s3-identity.sh laravel-dev
-sudo ./add-s3-identity.sh laravel-staging
-sudo ./add-s3-identity.sh laravel-prod
+sudo ./add-s3-identity.sh laravel-dev --bucket laravel-dev --bucket laravel-assets
+sudo ./add-s3-identity.sh laravel-staging --bucket laravel-staging
+sudo ./add-s3-identity.sh laravel-prod --bucket laravel-prod
 sudo ./install-seaweedfs.sh
 sudo docker restart mas-storage-seaweedfs
 ```
 
-Each command prints the new access key and secret once. Store them in the corresponding application secret manager. The generated identities receive `Read`, `List`, `Tagging`, and `Write` permissions; the original `default` identity also has `Admin` permission. Use separate identities per environment so credentials can be rotated or revoked independently.
+Each command prints the new access key and secret once. Store them in the corresponding application secret manager. Named identities receive bucket-scoped `Read`, `List`, `Tagging`, and `Write` permissions only for the buckets supplied with `--bucket`; the original `default` identity retains `Admin` permission. Use separate identities per environment so credentials can be rotated or revoked independently.
 
 ### Complete application example
 
-The following example creates one identity for the Laravel development
-environment and uses it with multiple buckets:
+The following example creates the buckets with the administrator credential,
+then creates one Laravel development identity with access to those buckets:
 
 ```bash
-# 1. Create the identity on the SeaweedFS server.
-sudo ./add-s3-identity.sh laravel-dev
+# 1. Use the administrator credentials to create buckets.
+export AWS_ACCESS_KEY_ID='cnpg-admin'
+export AWS_SECRET_ACCESS_KEY='THE_ADMIN_SECRET'
+export AWS_DEFAULT_REGION='us-east-1'
+export S3_ENDPOINT='http://mas-storage-seaweedfs.com'
+
+aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-dev
+aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-assets
+aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-backups
+
+# 2. Create the identity on the SeaweedFS server with existing buckets.
+sudo ./add-s3-identity.sh laravel-dev \
+  --bucket laravel-dev \
+  --bucket laravel-assets \
+  --bucket laravel-backups
+
+# 3. Apply the generated configuration.
+sudo ./install-seaweedfs.sh
+sudo docker restart mas-storage-seaweedfs
 ```
 
 The command prints values similar to these once:
@@ -211,21 +234,14 @@ Secret key:  <generated-secret>
 Copy the secret directly into the application secret manager. Do not commit it
 to Git, place it in the README, or send it through an unencrypted message.
 
-On the client or application host, configure the credentials:
+On the client or application host, replace the administrator credentials with
+the new project credentials:
 
 ```bash
 export AWS_ACCESS_KEY_ID='mas-laravel-dev'
 export AWS_SECRET_ACCESS_KEY='THE_GENERATED_SECRET'
 export AWS_DEFAULT_REGION='us-east-1'
 export S3_ENDPOINT='http://mas-storage-seaweedfs.com'
-```
-
-Create separate buckets for different data categories:
-
-```bash
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-dev
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-assets
-aws --endpoint-url "$S3_ENDPOINT" s3 mb s3://laravel-backups
 ```
 
 Verify the credentials and buckets:
@@ -248,6 +264,35 @@ sudo ./check-storage-usage.sh \
 Use the same pattern for `laravel-staging` and `laravel-prod`, but keep their
 credentials and application secrets separate. Creating an identity does not
 automatically create buckets.
+
+To change the bucket access for an existing non-admin identity:
+
+```bash
+sudo ./grant-s3-identity-buckets.sh flowvaro-dev \
+  --bucket flowvaro-dev \
+  --bucket flowvaro-assets
+```
+
+This replaces the identity’s permissions with bucket-scoped `Read`, `List`,
+`Tagging`, and `Write` actions. It never grants `Admin`, `CreateBucket`, or
+bucket-delete access. The command creates a backup of `identities.conf` and
+restarts SeaweedFS after applying the configuration.
+
+To rotate only an existing non-admin identity’s secret key while keeping its
+identity name, access key, buckets, and permissions unchanged:
+
+```bash
+sudo ./rotate-s3-identity-secret.sh laravel-dev
+```
+
+Confirm with:
+
+```text
+ROTATE laravel-dev
+```
+
+The script prints the new secret once, creates an identity-file backup, and
+invalidates the old secret. Update the application secret immediately.
 
 When using a named identity from a client, export that identity’s credentials
 (not the default `.env` credentials) before creating or accessing its buckets:
@@ -443,6 +488,10 @@ export AWS_SECRET_ACCESS_KEY='YOUR_SECRET_KEY'
 Use `--size-mb 10` for a larger transfer test or `--keep-object` to retain the
 temporary object. The script never prints the secret key.
 
+Alternatively, configure credentials on the remote computer with `aws
+configure` and run the test with `--profile PROFILE_NAME`. The script also
+honors the standard AWS CLI credential provider chain.
+
 
 
 
@@ -596,6 +645,8 @@ sudo rm -rf /opt/mas-storage-seaweedfs
 | `install-nginx.sh` | Install, validate, and reload the Nginx reverse proxy. |
 | `uninstall-seaweedfs.sh` | Remove the container and Nginx configuration while preserving data by default. |
 | `add-s3-identity.sh` | Create a named project or environment identity. |
+| `grant-s3-identity-buckets.sh` | Assign existing buckets to a non-admin identity. |
+| `rotate-s3-identity-secret.sh` | Rotate a non-admin identity’s secret without changing its access key or buckets. |
 | `check-storage-usage.sh` | Report one identity’s usage across one or more buckets. |
 | `remove-s3-identity.sh` | List buckets or safely remove explicitly selected buckets and an identity. |
 | `remote-test-object-storage.sh` | Test remote authenticated upload, download, and checksum integrity. |

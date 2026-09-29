@@ -158,7 +158,7 @@ remove_managed_container() {
     fi
 
     local managed
-    managed="$(docker inspect -f '{{ index .Config.Labels "${MANAGED_LABEL}" }}' "${CONTAINER_NAME}")"
+    managed="$(docker inspect -f "{{ index .Config.Labels \"${MANAGED_LABEL}\" }}" "${CONTAINER_NAME}")"
     [[ "${managed}" == "true" ]] || managed_container_conflict
     log "Replacing the existing managed container (the data directory is preserved)."
     docker rm -f "${CONTAINER_NAME}" >/dev/null
@@ -170,7 +170,7 @@ reuse_running_container() {
     fi
 
     local managed running restart_count
-    managed="$(docker inspect -f '{{ index .Config.Labels "${MANAGED_LABEL}" }}' "${CONTAINER_NAME}")"
+    managed="$(docker inspect -f "{{ index .Config.Labels \"${MANAGED_LABEL}\" }}" "${CONTAINER_NAME}")"
     [[ "${managed}" == "true" ]] || managed_container_conflict
 
     running="$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")"
