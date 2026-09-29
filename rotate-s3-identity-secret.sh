@@ -43,5 +43,4 @@ mv -- "${tmp_file}" "${IDENTITIES_FILE}"
 trap - EXIT
 
 "${SCRIPT_DIR}/install-seaweedfs.sh" >/dev/null
-docker restart mas-storage-seaweedfs >/dev/null
 printf 'Secret rotated successfully for: %s\nAccess key (unchanged): %s\nNew secret key:          %s\nIdentity backup:         %s\n\nUpdate the application secret immediately. The old secret is now invalid.\n' "${identity_name}" "${access_key}" "${new_secret}" "${backup_file}"

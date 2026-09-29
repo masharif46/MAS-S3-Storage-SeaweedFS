@@ -2,6 +2,27 @@
 
 set -Eeuo pipefail
 
+pull_image=false
+
+usage() {
+    printf 'Usage: sudo ./install-seaweedfs.sh [--pull|--skip-pull]\n'
+    printf '\n'
+    printf '  --pull       Pull the pinned image before reconciling the container.\n'
+    printf '  --skip-pull  Compatibility alias; use the local image when available.\n'
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pull) pull_image=true ;;
+            --skip-pull) pull_image=false ;;
+            --help|-h) usage; exit 0 ;;
+            *) die "Unknown argument: $1" ;;
+        esac
+        shift
+    done
+}
+
 # SeaweedFS single-node S3 deployment.
 # Configuration is loaded from .env and the S3 identity file is generated
 # outside the container with restrictive permissions.
@@ -180,31 +201,6 @@ remove_managed_container() {
     docker rm -f "${CONTAINER_NAME}" >/dev/null
 }
 
-reuse_running_container() {
-    if ! docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
-        return 1
-    fi
-
-    local managed running restart_count
-    managed="$(docker inspect -f "{{ index .Config.Labels \"${MANAGED_LABEL}\" }}" "${CONTAINER_NAME}")"
-    [[ "${managed}" == "true" ]] || managed_container_conflict
-
-    running="$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")"
-    [[ "${running}" == "true" ]] || return 1
-    restart_count="$(docker inspect -f '{{.RestartCount}}' "${CONTAINER_NAME}")"
-    [[ "${restart_count}" == "0" ]] || return 1
-
-    log "Container ${CONTAINER_NAME} is already running; skipping image pull and restart."
-    wait_for_s3
-    printf '\nSeaweedFS is already ready.\n'
-    printf 'S3 endpoint:    http://%s:%s\n' "${S3_BIND_ADDRESS}" "${S3_PORT}"
-    printf 'Admin endpoint: http://%s:%s\n' "${MASTER_BIND_ADDRESS}" "${MASTER_PORT}"
-    printf 'Nginx S3 URL:   http://mas-storage-seaweedfs.com\n'
-    printf 'Nginx Admin URL: http://admin.mas-storage-seaweedfs.com\n'
-    show_diagnostics
-    exit 0
-}
-
 wait_for_s3() {
     local url="http://127.0.0.1:${S3_PORT}"
     local status
@@ -234,11 +230,13 @@ show_diagnostics() {
     printf '\nDocker disk usage:\n'
     docker system df -v || true
     printf '\nUseful storage commands:\n'
-    printf '  docker exec %s sh -c '\''du -sh /data; df -h /data'\''\n' "${CONTAINER_NAME}"
+    printf '  sudo du -sh %s\n' "${SEAWEEDFS_DATA_DIR}"
+    printf '  df -h %s\n' "${SEAWEEDFS_DATA_DIR}"
     printf '  docker logs -f %s\n' "${CONTAINER_NAME}"
 }
 
 main() {
+    parse_args "$@"
     require_command docker
     require_command curl
     docker info >/dev/null 2>&1 || die "Docker daemon is not running"
@@ -246,10 +244,13 @@ main() {
     load_config
     write_s3_config
     restore_sudo_user_ownership
-    reuse_running_container || true
 
-    log "Pulling pinned image ${SEAWEEDFS_IMAGE}"
-    docker pull "${SEAWEEDFS_IMAGE}"
+    if [[ "${pull_image}" == true ]] || ! docker image inspect "${SEAWEEDFS_IMAGE}" >/dev/null 2>&1; then
+        log "Pulling pinned image ${SEAWEEDFS_IMAGE}"
+        docker pull "${SEAWEEDFS_IMAGE}"
+    else
+        log "Using local pinned image ${SEAWEEDFS_IMAGE}; use --pull to check for updates"
+    fi
 
     prepare_data_dir
     remove_managed_container
@@ -282,8 +283,9 @@ main() {
     printf 'Nginx S3 URL:      http://mas-storage-seaweedfs.com\n'
     printf 'Nginx Admin URL:   http://admin.mas-storage-seaweedfs.com\n'
     printf 'Configured bucket: %s (create it with the AWS CLI; see README.md)\n' "${S3_BUCKET}"
-    printf '\nStorage usage:\n'
-    docker exec "${CONTAINER_NAME}" sh -c 'du -sh /data; df -h /data' || true
+    printf '\nHost storage usage:\n'
+    du -sh "${SEAWEEDFS_DATA_DIR}" || true
+    df -h "${SEAWEEDFS_DATA_DIR}" || true
     printf '\nTroubleshooting:\n'
     printf '  docker ps -a --filter name=%s\n' "${CONTAINER_NAME}"
     printf '  docker logs -f %s\n' "${CONTAINER_NAME}"
@@ -291,11 +293,9 @@ main() {
     printf '  sudo du -sh %s\n' "${SEAWEEDFS_DATA_DIR}"
     printf '  df -h %s\n' "${SEAWEEDFS_DATA_DIR}"
     printf '  docker system df -v\n'
-    printf '  docker exec %s sh -c '\''du -sh /data; df -h /data'\''\n' "${CONTAINER_NAME}"
     printf '\nUseful commands:\n'
     printf '  docker logs -f %s\n' "${CONTAINER_NAME}"
-    printf '  docker restart %s\n' "${CONTAINER_NAME}"
-    printf '  ./install-seaweedfs.sh\n'
+    printf '  sudo ./install-seaweedfs.sh\n'
 }
 
 main "$@"

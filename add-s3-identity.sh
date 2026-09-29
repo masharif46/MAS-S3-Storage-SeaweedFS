@@ -8,14 +8,16 @@ readonly CONFIG_DIR="${SCRIPT_DIR}/.seaweedfs"
 readonly IDENTITIES_FILE="${CONFIG_DIR}/identities.conf"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...]\n'
+    printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...] [--no-apply]\n'
     printf 'Example: sudo ./add-s3-identity.sh laravel-dev --bucket laravel-dev --bucket laravel-assets\n'
+    printf '\nBy default, the identity is applied immediately. Use --no-apply only when batching changes.\n'
     exit 0
 fi
 
 identity_name="${1:-}"
 shift || true
 declare -a bucket_names=()
+apply_config=true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -24,9 +26,14 @@ while [[ $# -gt 0 ]]; do
             bucket_names+=("$2")
             shift 2
             ;;
+        --no-apply)
+            apply_config=false
+            shift
+            ;;
         --help|-h)
-            printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...]\n'
+            printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...] [--no-apply]\n'
             printf 'Example: sudo ./add-s3-identity.sh laravel-dev --bucket laravel-dev --bucket laravel-assets\n'
+            printf '\nBy default, the identity is applied immediately. Use --no-apply only when batching changes.\n'
             exit 0
             ;;
         *) printf '[ERROR] Unknown argument: %s\n' "$1" >&2; exit 1 ;;
@@ -34,7 +41,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "${identity_name}" =~ ^[A-Za-z0-9._-]+$ ]] || {
-    printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...]\n' >&2
+    printf 'Usage: sudo ./add-s3-identity.sh IDENTITY --bucket NAME [--bucket NAME ...] [--no-apply]\n' >&2
     exit 1
 }
 [[ ${#bucket_names[@]} -gt 0 ]] || {
@@ -84,5 +91,17 @@ chmod 600 "${IDENTITIES_FILE}"
 printf 'Created identity: %s\n' "${identity_name}"
 printf 'Access key:       %s\n' "${access_key}"
 printf 'Secret key:       %s\n' "${secret_key}"
-printf '\nApply it with:\n  sudo ./install-seaweedfs.sh\n'
-printf '  sudo docker restart mas-storage-seaweedfs\n'
+
+if [[ "${apply_config}" == true ]]; then
+    printf '\n[INFO] Applying the identity configuration now.\n'
+    if "${SCRIPT_DIR}/install-seaweedfs.sh" --skip-pull; then
+        printf '[INFO] Identity is active. The container was recreated; no separate Docker restart is needed.\n'
+    else
+        printf '[ERROR] Identity was saved but could not be applied. Recover with:\n' >&2
+        printf '  sudo ./install-seaweedfs.sh\n' >&2
+        exit 1
+    fi
+else
+    printf '\n[WARNING] Identity is saved but not active because --no-apply was used.\n'
+    printf 'Apply all batched changes with:\n  sudo ./install-seaweedfs.sh\n'
+fi

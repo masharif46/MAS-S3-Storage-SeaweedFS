@@ -14,7 +14,7 @@ Recommended GitHub description:
 - [Features](#features)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
-- [Installation](#quick-start)
+- [Step-by-step deployment](#step-by-step-deployment)
 - [Hostname resolution](#local-hostname-resolution)
 - [Client configuration](#client-configuration)
 - [Storage and capacity](#storage)
@@ -72,26 +72,85 @@ Docker maps host ports to SeaweedFS’s internal ports:
 - Linux host
 - Docker and a running Docker daemon
 - `curl`
+- AWS CLI v2 for bucket administration and S3 transfer tests
 - Nginx for hostname access
 - `sudo` privileges
 
-## Quick start
+## Step-by-step deployment
 
-From the project directory:
+Follow these three steps in order. The first two commands run on the
+SeaweedFS server. The third command runs from a separate client computer.
+
+### Step 1 — Install SeaweedFS and Nginx
+
+From the project directory on the storage server:
 
 ```bash
-chmod +x install-seaweedfs.sh install-nginx.sh uninstall-seaweedfs.sh
-chmod +x backup-seaweedfs.sh restore-seaweedfs.sh add-s3-identity.sh
-chmod +x check-storage-usage.sh remove-s3-identity.sh
-chmod +x grant-s3-identity-buckets.sh
-chmod +x rotate-s3-identity-secret.sh
-chmod +x remote-test-object-storage.sh
-chmod +x test-seaweedfs.sh
 sudo ./install-seaweedfs.sh
 sudo ./install-nginx.sh
+sudo ./test-seaweedfs.sh --strict-nginx
 ```
 
-The installer creates `.env` with a randomly generated S3 secret. The storage directory is created automatically and assigned to the `seaweed` UID/GID detected from the pinned image; the host login user’s UID does not need to match.
+The installer creates `.env` with a random administrator S3 secret and creates
+the dedicated data directory at `/opt/mas-storage-seaweedfs`. Storage ownership
+is assigned to the `seaweed` user inside the pinned container image; it does
+not need to match the host login user's UID.
+
+On every client computer that will use the Nginx URLs, add the Nginx server IP
+to `/etc/hosts` (or create matching DNS records):
+
+```text
+SERVER_IP mas-storage-seaweedfs.com admin.mas-storage-seaweedfs.com
+getent hosts mas-storage-seaweedfs.com admin.mas-storage-seaweedfs.com
+```
+
+### Step 2 — Create buckets and a project identity
+
+Run this on the storage server. Buckets are created with the default
+administrator identity. The project identity receives access only to the
+buckets listed with `--bucket`; it cannot create or delete buckets.
+
+```bash
+# Load the local administrator credentials without printing them.
+set -a
+source .env
+set +a
+export AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY"
+export AWS_DEFAULT_REGION='us-east-1'
+
+# Create the buckets for one project/environment.
+aws --endpoint-url http://127.0.0.1:28333 s3 mb s3://myapps-dev-backups
+aws --endpoint-url http://127.0.0.1:28333 s3 mb s3://myapps-dev-lead-finder-artifacts
+
+# Create and automatically activate restricted application credentials.
+sudo ./add-s3-identity.sh myapps-dev \
+  --bucket myapps-dev-backups \
+  --bucket myapps-dev-lead-finder-artifacts
+```
+
+Save the access key and secret printed by `add-s3-identity.sh` in the project's
+secret manager. The identity is activated automatically; do not run a separate
+`docker restart`.
+
+### Step 3 — Test remotely as the project identity
+
+Copy `remote-test-object-storage.sh` to a remote computer with AWS CLI
+installed. Run the test as the normal remote user, not with `sudo`:
+
+```bash
+export AWS_ACCESS_KEY_ID='mas-myapps-dev'
+export AWS_SECRET_ACCESS_KEY='THE_SECRET_PRINTED_IN_STEP_2'
+export AWS_DEFAULT_REGION='us-east-1'
+
+./remote-test-object-storage.sh \
+  --endpoint http://mas-storage-seaweedfs.com \
+  --bucket myapps-dev-backups
+```
+
+The test creates a temporary 1 MiB object, downloads it, verifies its SHA-256
+checksum, and deletes the object. A `PASS` result confirms DNS/hosts routing,
+Nginx, credentials, bucket permissions, upload, and download.
 
 ### Installer selection
 
@@ -160,13 +219,20 @@ credentials:
 | `s3.json` | Generated SeaweedFS runtime configuration mounted into the container. |
 
 They should represent the same identities, but they are not the same format.
-After creating an identity, regenerate the runtime configuration and restart
-the container:
+After a change, the source registry must be rendered into the runtime JSON.
+`add-s3-identity.sh`, `grant-s3-identity-buckets.sh`, and
+`rotate-s3-identity-secret.sh` apply their changes automatically. If you use
+`add-s3-identity.sh --no-apply` to batch identity changes, apply the batch
+with:
 
 ```bash
 sudo ./install-seaweedfs.sh
-sudo docker restart mas-storage-seaweedfs
 ```
+
+The installer reconciles the container so it can load the generated runtime
+configuration. It uses the existing pinned image by default; run
+`sudo ./install-seaweedfs.sh --pull` when you intentionally want to fetch the
+pinned image again.
 
 Verify the active identity names with:
 
@@ -180,18 +246,17 @@ been applied to the running SeaweedFS container. Do not use the legacy
 `install-seaweedfs-k3d.sh` installer, because it can regenerate `s3.json`
 without the current identity registry.
 
-Create credentials for an application or environment with:
-
 Create the required buckets first using the administrator credentials. Project
 identities cannot create or delete buckets; they receive access only to the
-existing buckets explicitly listed with `--bucket`.
+existing buckets explicitly listed with `--bucket`. Then create and activate
+an identity as follows:
 
 ```bash
-sudo ./add-s3-identity.sh laravel-dev --bucket laravel-dev --bucket laravel-assets
-sudo ./add-s3-identity.sh laravel-staging --bucket laravel-staging
-sudo ./add-s3-identity.sh laravel-prod --bucket laravel-prod
-sudo ./install-seaweedfs.sh
-sudo docker restart mas-storage-seaweedfs
+# The buckets must already exist.
+sudo ./add-s3-identity.sh laravel-dev \
+  --bucket laravel-dev \
+  --bucket laravel-assets \
+  --bucket laravel-backups
 ```
 
 Each command prints the new access key and secret once. Store them in the corresponding application secret manager. Named identities receive bucket-scoped `Read`, `List`, `Tagging`, and `Write` permissions only for the buckets supplied with `--bucket`; the original `default` identity retains `Admin` permission. Use separate identities per environment so credentials can be rotated or revoked independently.
@@ -218,9 +283,7 @@ sudo ./add-s3-identity.sh laravel-dev \
   --bucket laravel-assets \
   --bucket laravel-backups
 
-# 3. Apply the generated configuration.
-sudo ./install-seaweedfs.sh
-sudo docker restart mas-storage-seaweedfs
+# The identity is applied automatically. No Docker restart is required.
 ```
 
 The command prints values similar to these once:
@@ -295,13 +358,13 @@ The script prints the new secret once, creates an identity-file backup, and
 invalidates the old secret. Update the application secret immediately.
 
 When using a named identity from a client, export that identity’s credentials
-(not the default `.env` credentials) before creating or accessing its buckets:
+(not the default `.env` credentials) before accessing its allowed buckets:
 
 ```bash
 export AWS_ACCESS_KEY_ID='LARAVEL_DEV_ACCESS_KEY'
 export AWS_SECRET_ACCESS_KEY='LARAVEL_DEV_SECRET_KEY'
 export AWS_DEFAULT_REGION='us-east-1'
-aws --endpoint-url http://mas-storage-seaweedfs.com s3 mb s3://laravel-dev
+aws --endpoint-url http://mas-storage-seaweedfs.com s3 ls s3://laravel-dev
 ```
 
 Separate identities improve credential management, but the static identity file does not by itself restrict an identity to one bucket. For strict dev/staging/production isolation, use separate SeaweedFS instances or configure bucket/IAM policies supported by your SeaweedFS deployment.
@@ -471,9 +534,9 @@ aws --version
 
 ## Remote object-storage test
 
-Run this from another computer with AWS CLI installed. It checks bucket access,
-uploads a generated file, downloads it, verifies the SHA-256 checksum, and
-deletes the temporary object.
+Step 3 above is the recommended remote-client workflow. This script checks
+bucket access, uploads a generated file, downloads it, verifies the SHA-256
+checksum, and deletes the temporary object.
 
 ```bash
 chmod +x remote-test-object-storage.sh
@@ -622,16 +685,37 @@ The restore script refuses to overwrite a non-empty data directory. Test restora
 
 ## Uninstall
 
-The uninstaller removes the SeaweedFS container and Nginx configuration but preserves storage by default:
+The standard uninstaller removes the SeaweedFS container and Nginx
+configuration while preserving all data and credentials by default:
 
 ```bash
 sudo ./uninstall-seaweedfs.sh
 ```
 
-Type `UNINSTALL` when prompted. Only delete the data after verifying backups:
+Type `UNINSTALL` when prompted. This preserves:
+
+- `/opt/mas-storage-seaweedfs` — S3 buckets and objects
+- `.seaweedfs/identities.conf` — project identities and access permissions
+- `.env` — default administrator credentials
+
+### True fresh installation
+
+Do not manually delete only `/opt/mas-storage-seaweedfs` when you want a
+completely new installation. That removes buckets and objects but deliberately
+leaves prior identities behind. Instead use the explicit purge mode:
 
 ```bash
-sudo rm -rf /opt/mas-storage-seaweedfs
+sudo ./uninstall-seaweedfs.sh --purge
+```
+
+Type `PURGE` only after confirming that all objects and credentials may be
+destroyed. Purge removes the storage directory, `.seaweedfs` identity/runtime
+configuration, and `.env` administrator credentials. It preserves the Docker
+image only. Then install again:
+
+```bash
+sudo ./install-seaweedfs.sh
+sudo ./install-nginx.sh
 ```
 
 

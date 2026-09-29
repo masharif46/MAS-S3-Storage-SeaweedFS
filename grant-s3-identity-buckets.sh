@@ -55,5 +55,4 @@ trap - EXIT
 printf '[INFO] Granted bucket-scoped access to %s for: %s\n' "${identity_name}" "${bucket_names[*]}"
 printf '[INFO] Identity backup: %s\n' "${backup_file}"
 "${SCRIPT_DIR}/install-seaweedfs.sh"
-docker restart mas-storage-seaweedfs >/dev/null
 printf '[INFO] Configuration applied. Bucket creation remains admin-only.\n'

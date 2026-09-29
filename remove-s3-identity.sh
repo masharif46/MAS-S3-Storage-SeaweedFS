@@ -121,5 +121,4 @@ trap - EXIT
 
 printf '[INFO] Removed identity: %s\n[INFO] Backup: %s\n' "${identity_name}" "${backup_file}"
 "${SCRIPT_DIR}/install-seaweedfs.sh"
-docker restart mas-storage-seaweedfs >/dev/null
 printf '[INFO] Cleanup completed successfully.\n'

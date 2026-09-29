@@ -103,11 +103,14 @@ for endpoint in "http://${S3_HOSTNAME}" "http://${ADMIN_HOSTNAME}"; do
 done
 
 if command -v aws >/dev/null 2>&1 && [[ -f "${IDENTITIES_FILE}" ]]; then
-    identity_line="$(/usr/bin/grep -E '^default\\|' "${IDENTITIES_FILE}" || true)"
+    identity_line="$(/usr/bin/grep -E '^default[|]' "${IDENTITIES_FILE}" || true)"
     if [[ -n "${identity_line}" ]]; then
         IFS='|' read -r _ access_key secret_key _ <<<"${identity_line}"
         export AWS_ACCESS_KEY_ID="${access_key}"
         export AWS_SECRET_ACCESS_KEY="${secret_key}"
+        # AWS CLI v2 may have no default region under sudo. SeaweedFS accepts
+        # the standard S3 default region used throughout this deployment.
+        export AWS_DEFAULT_REGION='us-east-1'
         if aws --endpoint-url http://127.0.0.1:28333 s3 ls >/dev/null 2>&1; then
             pass 'Authenticated S3 API request succeeded'
         else
