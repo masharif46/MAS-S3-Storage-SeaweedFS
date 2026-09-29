@@ -10,6 +10,7 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly ENV_FILE="${SCRIPT_DIR}/.env"
 readonly CONFIG_DIR="${SCRIPT_DIR}/.seaweedfs"
 readonly S3_CONFIG_FILE="${CONFIG_DIR}/s3.json"
+readonly IDENTITIES_FILE="${CONFIG_DIR}/identities.conf"
 readonly CONTAINER_NAME="mas-storage-seaweedfs"
 readonly MANAGED_LABEL="com.example.seaweedfs.managed"
 
@@ -112,28 +113,43 @@ write_s3_config() {
     # must be traversable/readable by the container's non-root user.
     chmod 755 "${CONFIG_DIR}"
     umask 077
-    cat >"${S3_CONFIG_FILE}" <<EOF
-{
-  "identities": [
-    {
-      "name": "${S3_ACCESS_KEY}",
-      "credentials": [
-        {
-          "accessKey": "${S3_ACCESS_KEY}",
-          "secretKey": "${S3_SECRET_KEY}"
-        }
-      ],
-      "actions": ["Read", "List", "Tagging", "Write", "Admin"]
-    }
-  ]
-}
+    if [[ ! -f "${IDENTITIES_FILE}" ]]; then
+        cat >"${IDENTITIES_FILE}" <<EOF
+# name|access_key|secret_key|actions
+default|${S3_ACCESS_KEY}|${S3_SECRET_KEY}|Read,List,Tagging,Write,Admin
 EOF
-    chmod 644 "${S3_CONFIG_FILE}"
+        chmod 600 "${IDENTITIES_FILE}"
+        log "Created initial S3 identity file: ${IDENTITIES_FILE}"
+    fi
+
+    local temp_file="${S3_CONFIG_FILE}.tmp"
+    local name access_key secret_key actions actions_json first=true found=false
+    printf '{\n  "identities": [' >"${temp_file}"
+    while IFS='|' read -r name access_key secret_key actions; do
+        [[ -z "${name}" || "${name}" == \#* ]] && continue
+        [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid identity name in ${IDENTITIES_FILE}: ${name}"
+        [[ "${access_key}" =~ ^[A-Za-z0-9._-]{3,128}$ ]] || die "Invalid access key for identity ${name}"
+        [[ "${secret_key}" =~ ^[A-Za-z0-9._~+/=-]{32,}$ ]] || die "Invalid secret key for identity ${name}"
+        [[ "${actions}" =~ ^[A-Za-z]+(,[A-Za-z]+)*$ ]] || die "Invalid actions for identity ${name}"
+        actions_json="$(printf '%s' "${actions}" | sed 's/,/","/g')"
+        if [[ "${first}" == true ]]; then
+            first=false
+        else
+            printf ',' >>"${temp_file}"
+        fi
+        printf '\n    {\n      "name": "%s",\n      "credentials": [{"accessKey": "%s", "secretKey": "%s"}],\n      "actions": ["%s"]\n    }' \
+            "${name}" "${access_key}" "${secret_key}" "${actions_json}" >>"${temp_file}"
+        found=true
+    done <"${IDENTITIES_FILE}"
+    [[ "${found}" == true ]] || die "No S3 identities found in ${IDENTITIES_FILE}"
+    printf '\n  ]\n}\n' >>"${temp_file}"
+    chmod 644 "${temp_file}"
+    mv -f "${temp_file}" "${S3_CONFIG_FILE}"
 }
 
 restore_sudo_user_ownership() {
     if [[ "${EUID}" -eq 0 && -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
-        chown "${SUDO_UID}:${SUDO_GID}" "${ENV_FILE}" "${CONFIG_DIR}" "${S3_CONFIG_FILE}"
+        chown "${SUDO_UID}:${SUDO_GID}" "${ENV_FILE}" "${CONFIG_DIR}" "${S3_CONFIG_FILE}" "${IDENTITIES_FILE}"
     fi
 }
 
